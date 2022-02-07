@@ -30,46 +30,36 @@ impl WholeStreamCommand for SubCommand {
 }
 
 fn split_row(args: CommandArgs) -> Result<ActionStream, ShellError> {
-    let name = args.call_info.name_tag.clone();
-
     let separator: Tagged<String> = args.req(0)?;
-    let input = args.input;
+    let splitter = separator.item.replace("\\n", "\n");
+    let name = args.call_info.name_tag;
+    let input = args.input.collect_string(name)?;
 
-    Ok(input
-        .flat_map(move |v| {
-            if let Ok(s) = v.as_string() {
-                let splitter = separator.item.replace("\\n", "\n");
-                trace!("splitting with {:?}", splitter);
-                let split_result: Vec<String> = s
-                    .split(&splitter)
-                    .filter_map(|s| {
-                        if s.trim() != "" {
-                            Some(s.to_string())
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
+    trace!("splitting with {:?}", splitter);
 
-                trace!("split result = {:?}", split_result);
-
-                (split_result.into_iter().map(move |s| {
-                    ReturnSuccess::value(
-                        UntaggedValue::Primitive(Primitive::String(s)).into_value(&v.tag),
-                    )
-                }))
-                .into_action_stream()
+    let split_result: Vec<String> = input
+        .split(&splitter)
+        .filter_map(|s| {
+            if s.trim() != "" {
+                Some(s.to_string())
             } else {
-                ActionStream::one(Err(ShellError::labeled_error_with_secondary(
-                    "Expected a string from pipeline",
-                    "requires string input",
-                    name.span,
-                    "value originates from here",
-                    v.tag.span,
-                )))
+                None
             }
         })
-        .into_action_stream())
+        .collect();
+
+    trace!("split result = {:?}", split_result);
+
+    let action_stream = split_result
+        .into_iter()
+        .map(move |s| {
+            ReturnSuccess::value(
+                UntaggedValue::Primitive(Primitive::String(s)).into_value(&input.tag),
+            )
+        })
+        .into_action_stream();
+
+    Ok(action_stream)
 }
 
 #[cfg(test)]
