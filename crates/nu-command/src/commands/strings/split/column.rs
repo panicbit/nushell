@@ -2,9 +2,7 @@ use crate::prelude::*;
 use log::trace;
 use nu_engine::WholeStreamCommand;
 use nu_errors::ShellError;
-use nu_protocol::{
-    Primitive, ReturnSuccess, Signature, SyntaxShape, TaggedDictBuilder, UntaggedValue,
-};
+use nu_protocol::{Primitive, Signature, SyntaxShape, TaggedDictBuilder, UntaggedValue};
 use nu_source::Tagged;
 
 pub struct SubCommand;
@@ -39,62 +37,48 @@ impl WholeStreamCommand for SubCommand {
 }
 
 fn split_column(args: CommandArgs) -> Result<ActionStream, ShellError> {
-    let name_span = args.call_info.name_tag.span;
     let separator: Tagged<String> = args.req(0)?;
     let rest: Vec<Tagged<String>> = args.rest(1)?;
     let collapse_empty = args.has_flag("collapse-empty");
-    let input = args.input;
+    let name = args.call_info.name_tag;
+    let input = args.input.collect_string(name)?;
 
-    Ok(input
-        .map(move |v| {
-            if let Ok(s) = v.as_string() {
-                let splitter = separator.replace("\\n", "\n");
-                trace!("splitting with {:?}", splitter);
+    let splitter = separator.replace("\\n", "\n");
+    trace!("splitting with {:?}", splitter);
 
-                let split_result: Vec<_> = if collapse_empty {
-                    s.split(&splitter).filter(|s| !s.is_empty()).collect()
-                } else {
-                    s.split(&splitter).collect()
-                };
+    let split_result: Vec<_> = if collapse_empty {
+        input.split(&splitter).filter(|s| !s.is_empty()).collect()
+    } else {
+        input.split(&splitter).collect()
+    };
 
-                trace!("split result = {:?}", split_result);
+    trace!("split result = {:?}", split_result);
 
-                let positional: Vec<_> = rest.iter().map(|f| f.item.clone()).collect();
+    let positional: Vec<_> = rest.iter().map(|f| f.item.clone()).collect();
 
-                // If they didn't provide column names, make up our own
-                if positional.is_empty() {
-                    let mut gen_columns = vec![];
-                    for i in 0..split_result.len() {
-                        gen_columns.push(format!("Column{}", i + 1));
-                    }
+    // If they didn't provide column names, make up our own
+    let result_value = if positional.is_empty() {
+        let mut gen_columns = vec![];
+        for i in 0..split_result.len() {
+            gen_columns.push(format!("Column{}", i + 1));
+        }
 
-                    let mut dict = TaggedDictBuilder::new(&v.tag);
-                    for (&k, v) in split_result.iter().zip(&gen_columns) {
-                        dict.insert_untagged(v.clone(), Primitive::String(k.into()));
-                    }
+        let mut dict = TaggedDictBuilder::new(&input.tag);
+        for (&k, v) in split_result.iter().zip(&gen_columns) {
+            dict.insert_untagged(v.clone(), Primitive::String(k.into()));
+        }
 
-                    ReturnSuccess::value(dict.into_value())
-                } else {
-                    let mut dict = TaggedDictBuilder::new(&v.tag);
-                    for (&k, v) in split_result.iter().zip(&positional) {
-                        dict.insert_untagged(
-                            v,
-                            UntaggedValue::Primitive(Primitive::String(k.into())),
-                        );
-                    }
-                    ReturnSuccess::value(dict.into_value())
-                }
-            } else {
-                Err(ShellError::labeled_error_with_secondary(
-                    "Expected a string from pipeline",
-                    "requires string input",
-                    name_span,
-                    "value originates from here",
-                    v.tag.span,
-                ))
-            }
-        })
-        .into_action_stream())
+        dict.into_value()
+    } else {
+        let mut dict = TaggedDictBuilder::new(&input.tag);
+        for (&k, v) in split_result.iter().zip(&positional) {
+            dict.insert_untagged(v, UntaggedValue::Primitive(Primitive::String(k.into())));
+        }
+
+        dict.into_value()
+    };
+
+    Ok(ActionStream::one(result_value))
 }
 
 #[cfg(test)]
